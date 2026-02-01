@@ -1,0 +1,16 @@
+{
+  "batch_id": "batch_20260119_094231",
+  "total_conversations": 5,
+  "successful": 5,
+  "failed": 0,
+  "success_rate": 1.0,
+  "task_type_distribution": {
+    "attribute_comparison": 5
+  },
+  "average_turns": 6.8,
+  "total_tokens_used": 0,
+  "estimated_cost_usd": 0.0,
+  "duration_seconds": 707.95,
+  "start_time": "2026-01-19T09:30:43.316709",
+  "end_time": "2026-01-19T09:42:31.264239"
+}

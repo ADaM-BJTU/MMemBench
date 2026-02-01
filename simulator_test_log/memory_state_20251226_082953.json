@@ -1,0 +1,31 @@
+{
+  "current_task": {
+    "task_id": "ac_vcr_0",
+    "task_type": "attribute_comparison",
+    "expected_answer": "Image 0 with 15 people",
+    "turns": [],
+    "final_evaluation": {},
+    "status": "incomplete",
+    "start_time": "2025-12-26T08:29:53.526929",
+    "end_time": null
+  },
+  "completed_tasks": [
+    {
+      "task_id": "ac_mscoco_0",
+      "task_type": "attribute_comparison",
+      "expected_answer": "Image 2 has the person topmost",
+      "turns": [],
+      "final_evaluation": {},
+      "status": "abandoned",
+      "start_time": "2025-12-26T08:29:53.526929",
+      "end_time": "2025-12-26T08:29:53.526929"
+    }
+  ],
+  "global_key_info": [],
+  "extracted_entities": {
+    "objects": [],
+    "attributes": {},
+    "counts": {},
+    "relations": []
+  }
+}

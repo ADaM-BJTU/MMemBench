@@ -1,0 +1,16 @@
+{
+  "batch_id": "batch_20260119_094231",
+  "started_at": "2026-01-19T09:30:43.316709",
+  "target_count": 5,
+  "completed_count": 5,
+  "failed_count": 0,
+  "completed_task_ids": [
+    "ac_mscoco_0",
+    "ac_mscoco_1",
+    "ac_mscoco_2",
+    "ac_mscoco_3",
+    "ac_mscoco_4"
+  ],
+  "failed_task_ids": [],
+  "last_updated": "2026-01-19T09:42:31.370776"
+}
