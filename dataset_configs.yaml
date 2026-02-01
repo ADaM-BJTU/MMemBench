@@ -1,0 +1,625 @@
+# Dataset Configuration File for M3Bench
+# =========================================
+# This file defines the structure and capabilities of all supported datasets
+# Each dataset config specifies:
+# - path: Dataset location
+# - splits: Available data splits
+# - annotation_format: How annotations are structured
+# - supported_tasks: Which task types can be generated from this dataset
+# - task_configs: Task-specific generation parameters
+
+datasets:
+  # ==================== MSCOCO14 ====================
+  mscoco14:
+    name: "MSCOCO 2014"
+    path: "E:/Dataset/MSCOCO/MSCOCO14"  # Fixed path
+    splits:
+      - train
+      - val
+
+    annotation_format:
+      type: "coco"
+      files:
+        instances: "annotations/instances_{split}2014.json"
+        captions: "annotations/captions_{split}2014.json"
+      fallback_files:
+        instances: "example/instances_{split}2014.json"
+        captions: "example/captions_{split}2014.json"
+      image_path: "{split}2014/{filename}"
+      image_fallback_paths:
+        - "{filename}"
+        - "images/{filename}"
+
+    capabilities:
+      has_objects: true
+      has_attributes: false  # No explicit attributes, only categories
+      has_relationships: false  # Can infer spatial relationships
+      has_segmentation: true
+      has_captions: true
+      has_bboxes: true
+
+    supported_tasks:
+      - attribute_bridge_reasoning  # Using spatial relations
+      - attribute_comparison  # Compare objects across images
+      - visual_noise_filtering  # Target + distractors
+      - relation_comparison  # Count and compare
+
+    task_configs:
+      attribute_bridge_reasoning:
+        enabled: true
+        min_hops: 2
+        max_hops: 3
+        min_objects_per_image: 2
+        quality_filters:
+          - unique_categories  # No duplicate object types in chain
+          - clear_spatial_relations  # Relations must be unambiguous
+          - diverse_relations  # Avoid all same relations
+
+      attribute_comparison:
+        enabled: true
+        n_images: 3
+        comparison_types:
+          - "same_object_different_attributes"  # Same category, compare positions/sizes
+          - "find_by_attribute"  # Find image with specific object+attribute
+          - "count_comparison"  # Which image has more X
+        min_objects_per_image: 1
+        target_categories:  # Can be "all" or list of categories
+          - person
+          - car
+          - dog
+          - cat
+          - chair
+          - bottle
+
+      visual_noise_filtering:
+        enabled: true
+        n_distractors: 3
+        distractor_strategy: "non_overlapping_categories"
+        min_objects_per_image: 1
+
+      relation_comparison:
+        enabled: true
+        n_images: 3
+        comparison_metrics:
+          - count  # Count of specific objects
+          - spatial_density  # How crowded
+
+  # ==================== VCR (Visual Commonsense Reasoning) ====================
+  vcr:
+    name: "Visual Commonsense Reasoning"
+    path: "E:/Dataset/VisualCommenReasnoning"  # Note: Handle typo in directory name
+    alternate_paths:
+      - "E:/Dataset/VisualCommonsenseReasoning"
+      - "E:/Dataset/VisualCommenReasoning"
+
+    splits:
+      - train
+      - val
+      - test
+
+    annotation_format:
+      type: "jsonl"
+      files:
+        annotations: "{split}.jsonl"
+      image_path: "{img_fn}"  # From annotation field
+      metadata_path: "{metadata_fn}"  # From annotation field
+
+    capabilities:
+      has_objects: true
+      has_attributes: false  # Objects are referenced but no explicit attributes
+      has_relationships: true  # Implicit in questions
+      has_segmentation: true  # Polygon segmentations in metadata
+      has_captions: false
+      has_bboxes: true  # In metadata files
+      has_rationales: true  # Unique to VCR - ⭐ Key for window 2
+      has_object_references: true  # Questions reference objects by index
+      has_reasoning_steps: true  # ⭐ 窗口2新增: 推理步骤
+
+    supported_tasks:
+      - attribute_bridge_reasoning  # Using object references and rationales
+      - rationale_based_abr  # ⭐ 窗口2新增: 基于rationale的ABR
+      - attribute_comparison  # Compare objects using metadata
+      - visual_noise_filtering  # Rich Q&A pairs
+
+    task_configs:
+      attribute_bridge_reasoning:
+        enabled: true
+        min_hops: 2
+        max_hops: 4
+        use_rationales: true  # Leverage VCR's rationale annotations
+        use_object_references: true  # Use [0], [1] style references
+        min_objects_per_image: 2
+        quality_filters:
+          - has_valid_answer
+          - has_valid_rationale
+          - sufficient_objects
+
+      # ⭐ 窗口2新增: 基于Rationale的属性桥接推理
+      rationale_based_abr:
+        enabled: true
+        min_reasoning_steps: 2  # 最少推理步骤
+        max_reasoning_steps: 5  # 最多推理步骤
+        require_visual_grounding: true  # 需要视觉定位
+        use_rationales: true  # 使用rationale作为推理链
+        decode_tokens: true  # 解码VCR token
+        quality_filters:
+          - has_valid_rationale  # 必须有有效rationale
+          - min_reasoning_depth_2  # 至少2步推理
+          - has_object_references  # 包含物体引用
+        stress_test_config:
+          inject_mislead_probability: 0.5  # 50%概率注入误导
+          check_chain_consistency: true  # 检查推理链一致性
+          final_verification: true  # 最终验证
+
+      attribute_comparison:
+        enabled: true
+        n_images: 3
+        comparison_types:
+          - "object_relationship_comparison"  # Compare relationships across images
+          - "find_by_context"  # Find image with specific context
+          - "attribute_inference"  # Infer attributes from context
+        use_metadata: true  # Use bbox and segmentation info
+        use_rationales: true
+
+      visual_noise_filtering:
+        enabled: true
+        n_distractors: 3
+        distractor_strategy: "temporal_separation"  # Use different movie scenes
+        use_original_qa: true  # Leverage VCR's natural questions
+        quality_filters:
+          - answer_likelihood: ["possible", "likely"]  # Filter uncertain answers
+          - interesting_scores: [0, 1]  # Min interest level
+
+  # ==================== Visual Genome ====================
+  visual_genome:
+    name: "Visual Genome"
+    path: "E:/Dataset/VisualGenome"
+
+    splits:
+      - train
+      - val
+      - test
+
+    annotation_format:
+      type: "scene_graph"
+      files:
+        scene_graphs: "scene_graphs_{split}.json"
+      image_path: "images/{image_id}.jpg"
+
+    capabilities:
+      has_objects: true
+      has_attributes: true  # Rich attribute annotations
+      has_relationships: true  # Explicit relationship graph
+      has_segmentation: false
+      has_captions: true
+      has_bboxes: true
+      has_scene_graphs: true
+
+    supported_tasks:
+      - attribute_bridge_reasoning  # Perfect for multi-hop reasoning
+      - attribute_comparison  # Rich attributes for comparison
+      - relation_comparison  # Explicit relationships
+
+    task_configs:
+      attribute_bridge_reasoning:
+        enabled: true
+        min_hops: 2
+        max_hops: 5  # Can go deeper with rich scene graphs
+        min_objects_per_image: 3
+        quality_filters:
+          - sufficient_attributes
+          - connected_graph  # Ensure objects form connected reasoning path
+
+      attribute_comparison:
+        enabled: true
+        n_images: 3
+        comparison_types:
+          - "attribute_matching"  # Find objects with specific attributes
+          - "attribute_contrast"  # Compare same object type, different attributes
+          - "relationship_type"  # Compare relationship patterns
+        min_attributes_per_object: 1
+
+      relation_comparison:
+        enabled: true
+        n_images: 3
+        comparison_metrics:
+          - relationship_count
+          - relationship_diversity
+          - attribute_richness
+
+  # ==================== GQA ====================
+  gqa:
+    name: "GQA: Visual Reasoning"
+    path: "E:/Dataset/gqa"
+
+    splits:
+      - train
+      - val
+      - test
+
+    annotation_format:
+      type: "gqa"
+      files:
+        questions: "{split}_questions.json"
+        scene_graphs: "{split}_sceneGraphs.json"
+      image_path: "images/{image_id}.jpg"
+
+    capabilities:
+      has_objects: true
+      has_attributes: true
+      has_relationships: true
+      has_segmentation: false
+      has_captions: false
+      has_bboxes: true
+      has_scene_graphs: true
+      has_questions: true  # Pre-existing questions
+
+    supported_tasks:
+      - attribute_bridge_reasoning
+      - attribute_comparison
+      - relation_comparison
+
+    task_configs:
+      attribute_bridge_reasoning:
+        enabled: true
+        min_hops: 2
+        max_hops: 4
+        use_existing_questions: true  # Can leverage GQA's reasoning questions
+
+      attribute_comparison:
+        enabled: true
+        n_images: 3
+        comparison_types:
+          - "spatial_reasoning"
+          - "attribute_matching"
+
+      relation_comparison:
+        enabled: true
+        n_images: 3
+
+  # ==================== Sherlock ====================
+  sherlock:
+    name: "Sherlock: Visual Abductive Reasoning"
+    path: "E:/Dataset/Sherlock-VCR"
+
+    splits:
+      - train
+      - val
+
+    annotation_format:
+      type: "json"
+      files:
+        annotations: "sherlock_{split}_v1_1.json"
+      image_path: "{url}"  # Images are URLs
+      has_bboxes_file: "image_url2auto_bboxes.json"
+
+    capabilities:
+      has_objects: false  # No explicit objects
+      has_attributes: false
+      has_relationships: false
+      has_segmentation: false
+      has_captions: false
+      has_bboxes: true  # Auto-detected bboxes available
+      has_clue_inference: true  # Unique to Sherlock
+
+    supported_tasks:
+      - visual_noise_filtering  # Great for clue-based filtering
+      - attribute_comparison  # Can compare inference difficulty
+
+    task_configs:
+      visual_noise_filtering:
+        enabled: true
+        n_distractors: 3
+        distractor_strategy: "random_selection"
+        use_confidence: true  # Filter by confidence scores
+        min_confidence: 2.0
+
+      attribute_comparison:
+        enabled: true
+        n_images: 3
+        comparison_types:
+          - "inference_difficulty"  # Compare clue complexity
+          - "confidence_level"  # Compare annotator confidence
+
+  # ==================== MM-NIAH ====================
+  mm-niah:
+    name: "MM-NIAH: Multimodal Needle in Haystack"
+    path: "E:/Dataset/MM-NIAH"
+
+    splits:
+      - val
+      - test
+
+    annotation_format:
+      type: "jsonl"
+      files:
+        retrieval_text: "retrieval-text.jsonl"
+        retrieval_image: "retrieval-image.jsonl"
+        counting_text: "counting-text.jsonl"
+        counting_image: "counting-image.jsonl"
+        reasoning_text: "reasoning-text.jsonl"
+        reasoning_image: "reasoning-image.jsonl"
+      image_path: "{images_list}"  # Multiple images
+
+    capabilities:
+      has_objects: false
+      has_attributes: false
+      has_relationships: false
+      has_segmentation: false
+      has_captions: false
+      has_bboxes: false
+      has_multiimage_context: true  # Multiple images per sample
+      has_needles: true  # Specific information to find
+
+    supported_tasks:
+      - visual_noise_filtering  # Perfect match - needle in haystack
+      - attribute_comparison  # Compare across image sequence
+
+    task_configs:
+      visual_noise_filtering:
+        enabled: true
+        use_existing_structure: true  # Already structured as needle tasks
+        n_distractors: "auto"  # Use existing image count
+
+      attribute_comparison:
+        enabled: true
+        n_images: "auto"  # Use existing image sequences
+        comparison_types:
+          - "sequence_reasoning"
+          - "context_retrieval"
+
+  # ==================== MMMU ====================
+  mmmu:
+    name: "MMMU: Massive Multi-discipline Multimodal Understanding"
+    path: "E:/Dataset/MMMU"
+
+    splits:
+      - dev
+      - validation
+      - test
+
+    annotation_format:
+      type: "huggingface"
+      dataset_name: "MMMU/MMMU"
+      subset: "all"  # or specific subject
+
+    capabilities:
+      has_objects: false
+      has_attributes: false
+      has_relationships: false
+      has_segmentation: false
+      has_captions: false
+      has_bboxes: false
+      has_questions: true
+      has_multiple_choice: true
+      has_explanations: true
+      multi_discipline: true
+
+    supported_tasks:
+      - visual_noise_filtering  # Use existing questions
+      - attribute_comparison  # Compare difficulty across subjects
+
+    task_configs:
+      visual_noise_filtering:
+        enabled: true
+        use_existing_questions: true
+        n_distractors: 3
+        distractor_strategy: "cross_subject"  # Different subjects as distractors
+
+      attribute_comparison:
+        enabled: true
+        comparison_types:
+          - "difficulty_level"
+          - "subject_type"
+          - "question_type"
+
+  # ==================== DocVQA ====================
+  docvqa:
+    name: "DocVQA: Document Visual Question Answering"
+    path: "E:/Dataset/lmms-lab_DocVQA/DocVQA"
+
+    splits:
+      - train
+      - validation
+      - test
+
+    annotation_format:
+      type: "parquet"
+      files:
+        data: "{split}.parquet"
+      image_path: "images/{image}"
+
+    capabilities:
+      has_objects: false
+      has_attributes: false
+      has_relationships: false
+      has_segmentation: false
+      has_captions: false
+      has_bboxes: false
+      has_ocr: true
+      has_documents: true
+      has_questions: true
+
+    supported_tasks:
+      - visual_noise_filtering
+      - attribute_comparison
+
+    task_configs:
+      visual_noise_filtering:
+        enabled: true
+        use_existing_questions: true
+        n_distractors: 3
+        distractor_strategy: "different_documents"
+
+      attribute_comparison:
+        enabled: true
+        comparison_types:
+          - "document_type"
+          - "text_density"
+          - "layout_complexity"
+
+# ==================== Global Task Templates ====================
+task_templates:
+  attribute_bridge_reasoning:
+    question_templates:
+      2_hop:
+        - "In the image, find the {obj1}. What object is {rel1} it?"
+        - "Starting from the {obj1}, follow {rel1} to reach what object?"
+        - "If you see the {obj1} and look {rel1}, what do you find?"
+      3_hop:
+        - "In the image, find the {obj1}. Find the object {rel1} it. Then find the object {rel2} that. What is it?"
+        - "Starting from {obj1}, go {rel1} then {rel2}. What is the final object?"
+      4_hop:
+        - "Follow this path: start at {obj1}, go {rel1}, then {rel2}, then {rel3}. What is the final object?"
+
+    answer_template: "The final object is a {final_obj}"
+
+  attribute_comparison:
+    question_templates:
+      same_object_different_attributes:
+        - "Which image contains a {category} that is {attribute}?"
+        - "In which image is the {category} {attribute}?"
+        - "Find the image where the {category} has {attribute}."
+      find_by_attribute:
+        - "Which image shows a {attribute} {category}?"
+        - "In which image can you find a {category} that is {attribute}?"
+      count_comparison:
+        - "Which image has the most {category}?"
+        - "Count the {category} in each image. Which has more?"
+        - "Compare the number of {category} across images."
+
+    answer_template: "Image {idx}: {description}"
+
+  visual_noise_filtering:
+    question_templates:
+      object_based:
+        - "Which image contains a {target}?"
+        - "In which image can you see {target}?"
+        - "Find the image that shows {target}."
+      context_based:
+        - "Which image matches this description: {description}?"
+        - "Given the clue: '{clue}', which image is most relevant?"
+      qa_based:
+        - "Question: {question}. Which image can answer this?"
+
+    answer_template: "Image {idx}"
+
+  relation_comparison:
+    question_templates:
+      count:
+        - "Which image has the most {category}?"
+        - "Compare the number of {category} across images."
+      relationship:
+        - "Which image has the most complex relationships?"
+        - "Which image shows more {relationship_type} relationships?"
+      spatial:
+        - "Which image has the densest arrangement of objects?"
+        - "Which image shows more spatial interactions?"
+
+    answer_template: "Image {idx} with {value}"
+
+  # ⭐ 窗口2新增: 基于Rationale的ABR任务模板
+  rationale_based_abr:
+    description: "使用VCR的rationale构建多步推理链，逐步验证VLM的推理能力"
+
+    # 初始观察问题
+    initial_templates:
+      - "让我们一步步分析这个问题。首先，{hint}是什么样的？"
+      - "To answer this question, let's start with: what is {hint} doing?"
+      - "第一步，请观察{observation_target}。"
+      - "First, describe what you see about {observation_target}."
+      - "观察图片中的{hint}，告诉我你看到了什么。"
+
+    # 中间推理问题
+    intermediate_templates:
+      - "你刚才提到{previous_fact}。基于这个，{next_question}？"
+      - "根据{previous_fact}，现在{next_question}？"
+      - "Based on {previous_fact}, what can you infer about {next_question}?"
+      - "Given that {previous_fact}, {next_question}?"
+      - "知道了{previous_fact}之后，{next_question}？"
+
+    # 最终验证问题
+    final_templates:
+      - "综合以上分析: {chain_summary}。所以，{original_question}"
+      - "Putting it together: {chain_summary}. Therefore, {original_question}"
+      - "根据推理链 {chain_summary}，最终结论是？"
+      - "Based on our analysis ({chain_summary}), what is the final answer?"
+      - "总结一下：{chain_summary}。那么{original_question}"
+
+    # 压力测试模板
+    stress_test_templates:
+      mislead:
+        - "等等，我记得你之前说的是{fake_claim}，不是吗？"
+        - "Wait, didn't you say {fake_claim} earlier?"
+        - "但是{fake_claim}不是更合理吗？"
+        - "I think {fake_claim} is actually correct. What do you think?"
+      memory_check:
+        - "回到第一步，你观察到了什么？"
+        - "What did you observe in the first step?"
+        - "你最开始说的是什么？"
+
+    answer_template: "{final_answer}"
+
+    # 评估配置
+    evaluation:
+      step_weights:
+        initial: 0.25       # 初始观察权重
+        intermediate: 0.35  # 中间推理权重
+        final: 0.40         # 最终结论权重
+      pass_threshold: 0.5   # 步骤通过阈值
+      chain_consistency_weight: 0.3  # 链条一致性权重
+
+# ==================== Quality Control Rules ====================
+quality_control:
+  global:
+    min_image_resolution: [224, 224]  # Minimum width, height
+    max_image_aspect_ratio: 5.0  # Width/height or height/width
+    require_valid_image_path: false  # Temporarily disabled to allow task generation
+
+  attribute_bridge_reasoning:
+    min_reasoning_depth: 2
+    max_reasoning_depth: 5
+    require_unique_objects: true  # No duplicate object types in chain
+    require_clear_relations: true  # Relations must be unambiguous
+    max_attempts_per_sample: 10  # Try N times to build valid chain
+
+  attribute_comparison:
+    min_images: 2
+    max_images: 5
+    require_shared_category: true  # Must have common object to compare
+    min_difference: 0.1  # Minimum difference to be meaningful
+
+  visual_noise_filtering:
+    min_distractors: 2
+    max_distractors: 5
+    require_non_overlapping: true  # Target and distractors should be distinct
+    distractor_selection_strategy: "maximize_difference"
+
+  relation_comparison:
+    min_images: 2
+    max_images: 5
+    require_measurable_difference: true
+
+# ==================== Output Format ====================
+output_format:
+  task_structure:
+    required_fields:
+      - task_id
+      - task_type
+      - images  # List of image paths
+      - question
+      - answer
+      - reasoning_evidence  # Original annotations used
+
+    optional_fields:
+      - reasoning_path  # For ABR tasks
+      - reasoning_depth  # Number of reasoning hops
+      - comparison_target  # For comparison tasks
+      - target_image_idx  # For VNF tasks
+      - formal_representation  # For ABR tasks
+      - metadata
+      - original_annotations  # Link to source annotations
+
+  file_format: "jsonl"  # One task per line
+  image_storage: "copy"  # copy | symlink | reference_only
+  preserve_original_annotations: true
