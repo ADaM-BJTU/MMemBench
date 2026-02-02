@@ -33,6 +33,9 @@ M3Bench_new/
 
 - MSCOCO 2014
 - VCR (Visual Commonsense Reasoning)
+- ScienceQA
+- DocVQA
+- RealworldQA
 
 ## 快速开始
 
