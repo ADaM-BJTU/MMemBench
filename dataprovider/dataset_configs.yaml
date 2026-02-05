@@ -1,0 +1,296 @@
+# dataset_configs.yaml
+mscoco14:
+  name: "MSCOCO 2014"
+  path: "d:/install_file/M3Bench/dataset/MSCOCO"
+  alternate_paths: ["d:/install_file/M3Bench/dataset/MSCOCO/example"]
+  splits: ["train", "val"]
+  capabilities:
+    object_detection: true
+    scene_graph: false
+    visual_commonsense: false
+  supported_tasks: ["VNF", "ABR", "RC", "AC", "logical_noise_filtering"]
+  annotation_format:
+    files:
+      annotations: "annotations/instances_{split}2014.json"
+      captions: "annotations/captions_{split}2014.json"
+    image_path: "{split}2014/{filename}"
+    image_fallback_paths:
+      - "example/{filename}"
+      - "test2014/{filename}"
+      - "val2014/{filename}"
+      - "train2014/{filename}"
+  task_configs:
+    VNF:
+      enabled: true
+      params:
+        min_images: 3
+        max_images: 5
+        target_category: "person"
+    ABR:
+      enabled: true
+      params:
+        min_hops: 2
+        max_hops: 3
+    RC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_type: "count"
+    AC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_metric: "position"
+
+vcr:
+  name: "Visual Commonsense Reasoning"
+  path: "d:/install_file/M3Bench/dataset/VisualCommenReasoning"
+  alternate_paths: ["d:/install_file/M3Bench/dataset/VisualCommenReasoning/example"]
+  splits: ["train", "val"]
+  capabilities:
+    object_detection: true
+    scene_graph: true
+    visual_commonsense: true
+  supported_tasks: ["VNF", "ABR", "RC", "AC"]
+  annotation_format:
+    files:
+      annotations: "{split}.jsonl"
+    image_path: "vcr1images/{img_fn}"
+    image_fallback_paths:
+      - "example/{img_fn}"
+  task_configs:
+    VNF:
+      enabled: true
+      params:
+        min_images: 3
+        max_images: 5
+        target_category: "person"
+    ABR:
+      enabled: true
+      params:
+        min_hops: 2
+        max_hops: 3
+    RC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_type: "count"
+    AC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_metric: "position"
+
+# 任务模板
+task_templates:
+  VNF:
+    # 通用视觉识别模板
+    question_templates:
+      - "Which image contains a {target_category}?"
+      - "In which image can you find a {target_category}?"
+    answer_template: "Image {target_image_idx}"
+    # QA数据集专用模板（基于原始问题构建）
+    qa_dataset_templates:
+      context_based:
+        - "Based on the question '{original_question}', which image contains the answer '{answer}'?"
+        - "Looking at these images, which one can answer: {original_question}?"
+      noise_injection:
+        - "One of these images can answer '{original_question}'. The others are distractors. Which is the correct one?"
+        - "Find the image that matches this context: '{original_question}'"
+  
+  ABR:
+    # 通用推理链模板
+    question_templates:
+      - "Given object '{start_object}' with attributes {start_attributes}, what is the final object after following the relationship chain?"
+    answer_template: "The final object is '{end_object}' with attributes: {end_attributes}"
+    # QA数据集专用模板（基于rationale构建多跳推理）
+    qa_dataset_templates:
+      rationale_based:
+        - "Given that {premise_from_rationale}, what can we conclude about {target}?"
+        - "First consider {step1}, then {step2}. What is the final answer?"
+      chained_qa:
+        - "Answer A tells us {info_a}. Based on this, what does Answer B imply about {question}?"
+        - "If {premise1} is true, and {premise2} follows, what must be the conclusion?"
+      solution_decomposition:
+        - "Step 1: {step1_explanation}. Step 2: {step2_explanation}. What is the final result?"
+  
+  RC:
+    # 通用关系对比模板
+    question_templates:
+      - "Which image has the most {target_category}?"
+      - "Compare the number of {target_category} across images."
+    answer_template: "Image {target_image_idx} has {count} {target_category}(s)"
+    # QA数据集专用模板（多样本聚合对比）
+    qa_dataset_templates:
+      cross_sample_comparison:
+        - "These images answer similar questions about {topic}. Which shows the most {attribute}?"
+        - "Compare the answers across these {topic} images. Which demonstrates {concept} most clearly?"
+      complexity_comparison:
+        - "Which image shows a more complex {relationship_type} relationship?"
+        - "Compare the scenarios. Which involves more {element_type}?"
+      vcr_scene_templates:
+        - "Compare the interpersonal relationships in these scenes. Which has more complex interactions?"
+        - "Which image shows a {relationship_type} relationship between characters?"
+  
+  AC:
+    # 通用属性对比模板
+    question_templates:
+      - "In which image is the {target_category} positioned topmost?"
+      - "Which image contains the smallest {target_category}?"
+    answer_template: "Image {target_image_idx} has the {comparison_metric} {target_category}"
+    # QA数据集专用模板（跨样本属性对比）
+    qa_dataset_templates:
+      cross_sample:
+        - "Compare the answers to similar questions across these images. Which image shows {attribute}?"
+        - "These images answer similar questions. Which one has the {comparison_metric} value?"
+      topic_based:
+        - "Both images relate to {topic}. Which one demonstrates {concept} more clearly?"
+        - "Considering the {subject} content, which image provides a better example of {concept}?"
+      skill_based:
+        - "Both answers require {skill}. Which image demonstrates better mastery?"
+
+  logical_noise_filtering:
+    # 逻辑噪声过滤模板
+    question_templates:
+      - "Which of the following scientific principles explains the phenomenon or concept shown in this image?"
+      - "Identify the correct scientific explanation for this image from the following options."
+    answer_template: "Option {target_option_idx}"
+    qa_dataset_templates:
+      lecture_match:
+        - "Which lecture content matches the scientific phenomenon in this image?"
+
+
+# 质量控制
+quality_control:
+  global:
+    min_question_length: 5
+    max_question_length: 100
+    min_answer_length: 2
+    max_answer_length: 50
+  VNF:
+    min_distractor_images: 2
+    max_distractor_images: 4
+  ABR:
+    min_chain_length: 2
+    max_chain_length: 4
+
+scienceqa:
+  name: "ScienceQA"
+  path: "d:/install_file/M3Bench/dataset/ScienceQA"
+  alternate_paths: []
+  splits: ["train", "validation", "test"]
+  capabilities:
+    object_detection: false
+    scene_graph: false
+    visual_commonsense: true
+  supported_tasks: ["AC", "RC", "VNF", "logical_noise_filtering"]
+  annotation_format:
+    files:
+      annotations: "{split}-00000-of-00001.parquet"
+    image_path: "{split}-00000-of-00001.parquet"
+  task_configs:
+    VNF:
+      enabled: true
+      params:
+        min_images: 3
+        max_images: 5
+        target_category: "person"
+    ABR:
+      enabled: false
+      params:
+        min_hops: 2
+        max_hops: 3
+    RC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_type: "count"
+    AC:
+      enabled: true
+      params:
+        n_images: 3
+        comparison_metric: "position"
+    logical_noise_filtering:
+      enabled: true
+      params:
+        n_options: 4
+
+docvqa:
+  name: "DocVQA"
+  path: "d:/install_file/M3Bench/dataset/lmms-lab_DocVQA/DocVQA"
+  alternate_paths: []
+  splits: ["train", "validation", "test"]
+  capabilities:
+    object_detection: false
+    scene_graph: false
+    visual_commonsense: true
+  supported_tasks: ["VNF"]
+  annotation_format:
+    files:
+      annotations: "{split}-00000-of-00006.parquet"
+    image_path: "{split}-00000-of-00006.parquet"
+  task_configs:
+    VNF:
+      enabled: true
+      params:
+        min_images: 3
+        max_images: 5
+        target_category: "person"
+    ABR:
+      enabled: false
+      params:
+        min_hops: 2
+        max_hops: 3
+    RC:
+      enabled: false
+      params:
+        n_images: 3
+        comparison_type: "count"
+    AC:
+      enabled: false
+      params:
+        n_images: 3
+        comparison_metric: "position"
+
+realworldqa:
+  name: "RealworldQA"
+  path: "d:/install_file/M3Bench/dataset/xai-org_RealworldQA/data"
+  alternate_paths: []
+  splits: ["test"]
+  capabilities:
+    object_detection: false
+    scene_graph: false
+    visual_commonsense: true
+  supported_tasks: ["VNF"]
+  annotation_format:
+    files:
+      annotations: "test-00000-of-00002.parquet"
+    image_path: "test-00000-of-00002.parquet"
+  task_configs:
+    VNF:
+      enabled: true
+      params:
+        min_images: 3
+        max_images: 5
+        target_category: "person"
+    ABR:
+      enabled: false
+      params:
+        min_hops: 2
+        max_hops: 3
+    RC:
+      enabled: false
+      params:
+        n_images: 3
+        comparison_type: "count"
+    AC:
+      enabled: false
+      params:
+        n_images: 3
+        comparison_metric: "position"
+
+# 输出格式
+output_format:
+  task_id_pattern: "{task_type}_{dataset_id}_{index}"
+  image_path_pattern: "images/{filename}"
+  metadata_fields: ["source_dataset", "generation_time", "quality_score"]

@@ -22,14 +22,13 @@ from pathlib import Path
 import logging
 import json
 import shutil
-import argparse
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dataprovider import DataLoader, DataGeneratorV2, load_config, ConfigLoader
+from dataprovider import DataLoader, DataGeneratorV2, load_config
 
 # 配置日志
 logging.basicConfig(
@@ -39,77 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# 默认数据集split配置
-DEFAULT_SPLITS = {
-    'mscoco14': 'val',      # Use val split - train images not downloaded
-    'vcr': 'train',
-    'visual_genome': 'train',
-    'gqa': 'train',
-    'sherlock': 'train',
-    'docvqa': 'validation',
-}
-
-
-def load_generation_config(
-    config_loader: ConfigLoader,
-    override_datasets: Optional[List[str]] = None,
-    override_num_samples: Optional[int] = None,
-    override_split: Optional[str] = None
-) -> Dict[str, Dict]:
-    """
-    从dataset_configs.yaml动态加载生成配置
-
-    Args:
-        config_loader: ConfigLoader实例
-        override_datasets: 如果指定，只处理这些数据集
-        override_num_samples: 如果指定，覆盖样本数
-        override_split: 如果指定，覆盖split
-
-    Returns:
-        Dict[str, Dict]:
-            key: dataset_id
-            value: {
-                'num_samples': int,
-                'split': str,
-                'enabled': bool
-            }
-    """
-    generation_config = {}
-
-    for dataset_id in config_loader.get_all_dataset_ids():
-        dataset_config = config_loader.get_dataset_config(dataset_id)
-
-        if dataset_config is None:
-            continue
-
-        # 检查是否有任何任务类型启用
-        has_enabled_task = any(
-            dataset_config.is_task_enabled(task)
-            for task in dataset_config.supported_tasks
-        )
-
-        if not has_enabled_task:
-            logger.debug(f"跳过 {dataset_id}: 没有启用的任务类型")
-            continue
-
-        # 如果指定了override_datasets，只处理这些数据集
-        if override_datasets and dataset_id not in override_datasets:
-            continue
-
-        # 获取默认配置
-        num_samples = override_num_samples or 10
-        split = override_split or DEFAULT_SPLITS.get(dataset_id, 'train')
-
-        generation_config[dataset_id] = {
-            'num_samples': num_samples,
-            'split': split,
-            'enabled': True
-        }
-
-    return generation_config
-
-
-def find_next_run_number(base_dir="generated_tasks_v2"):
+def find_next_run_number(base_dir="d:\\install_file\\M3Bench\\generated_tasks_v2"):
     """找到下一个可用的 run 编号"""
     base_path = Path(base_dir)
     base_path.mkdir(exist_ok=True)
@@ -131,7 +60,7 @@ def find_next_run_number(base_dir="generated_tasks_v2"):
     return max(run_numbers) + 1 if run_numbers else 1
 
 
-def setup_output_directory(base_dir="generated_tasks_v2"):
+def setup_output_directory(base_dir="d:\\install_file\\M3Bench\\generated_tasks_v2"):
     """创建输出目录结构"""
     run_number = find_next_run_number(base_dir)
     run_dir = Path(base_dir) / f"run_{run_number}"
@@ -151,8 +80,9 @@ def copy_image_with_check(src_path, dst_dir):
 
     if not src.exists():
         logger.debug(f"Image not found (will skip copy): {src}")
-        # Don't fail - just skip copying, use original path
-        return str(src)  # Return original path even if doesn't exist
+        # Return relative path even if original doesn't exist
+        # This ensures consistent path format in output
+        return f"images/{src.name}"
 
     dst = Path(dst_dir) / src.name
 
@@ -162,7 +92,8 @@ def copy_image_with_check(src_path, dst_dir):
         return f"images/{src.name}"
     except Exception as e:
         logger.error(f"Failed to copy {src}: {e}")
-        return str(src)  # Return original path if copy fails
+        # Return relative path even if copy fails
+        return f"images/{src.name}"
 
 
 def process_task_with_images(task, run_dir):
@@ -181,12 +112,9 @@ def process_task_with_images(task, run_dir):
                     missing_count += 1
             else:
                 logger.debug(f"Skipping task {task.get('task_id')}: missing image {img_path}")
-                return None  # 严格过滤：图片完全无法处理则舍弃
-
-        # 如果所有图片都缺失，则舍弃
-        if missing_count == len(image_paths):
-            logger.debug(f"Skipping task {task.get('task_id')}: all images missing")
-            return None
+                # 不要因为单个图片缺失而舍弃整个任务
+                new_image_paths.append(img_path)  # 使用原始路径
+                missing_count += 1
 
         # 保存推理证据
         if 'reasoning_evidence' in task:
@@ -269,8 +197,14 @@ def generate_dataset_tasks(generator: DataGeneratorV2,
                     processed.append(processed_task)
 
             if processed:
-                # 保存到JSONL文件
-                output_file = run_dir / "tasks" / f"{task_type}_{dataset_id}.jsonl"
+                # 保存到JSONL文件，使用完整的任务类型名称
+                task_type_full = {
+                    'VNF': 'visual_noise_filtering',
+                    'ABR': 'attribute_bridge_reasoning',
+                    'RC': 'relation_comparison',
+                    'AC': 'attribute_comparison'
+                }.get(task_type, task_type)
+                output_file = run_dir / "tasks" / f"{task_type_full}_{dataset_id}.jsonl"
                 with open(output_file, 'w', encoding='utf-8') as f:
                     for task in processed:
                         f.write(json.dumps(task, ensure_ascii=False) + '\n')
@@ -389,66 +323,8 @@ def generate_report(run_dir: Path, all_results: Dict[str, Dict], run_number: int
     logger.info(f"✓ 报告已保存: {report_file} 和 {readme_file}")
 
 
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(
-        description="M3Bench 任务生成器 V2 - 配置驱动的多数据集任务生成",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  # 使用默认配置生成所有已启用数据集的任务
-  python generate_all_tasks_v2.py
-
-  # 只为特定数据集生成任务
-  python generate_all_tasks_v2.py --datasets mscoco14 vcr visual_genome
-
-  # 自定义样本数量
-  python generate_all_tasks_v2.py --num-samples 20
-
-  # 指定数据split
-  python generate_all_tasks_v2.py --split val
-
-  # 组合使用
-  python generate_all_tasks_v2.py --datasets gqa sherlock --num-samples 15 --split train
-        """
-    )
-
-    parser.add_argument(
-        '--datasets', nargs='+',
-        help='指定要生成的数据集 (默认: 所有已启用的数据集)'
-    )
-    parser.add_argument(
-        '--num-samples', type=int, default=None,
-        help='每个任务类型的样本数 (默认: 10)'
-    )
-    parser.add_argument(
-        '--split', default=None,
-        help='数据集划分 (默认: 每个数据集使用各自的默认split)'
-    )
-    parser.add_argument(
-        '--config-file', default='dataset_configs.yaml',
-        help='配置文件路径 (默认: dataset_configs.yaml)'
-    )
-    parser.add_argument(
-        '--data-root', default='E:/Dataset',
-        help='数据集根目录 (默认: E:/Dataset)'
-    )
-    parser.add_argument(
-        '--output-dir', default='generated_tasks_v2',
-        help='输出目录 (默认: generated_tasks_v2)'
-    )
-    parser.add_argument(
-        '--verbose', '-v', action='store_true',
-        help='显示详细输出'
-    )
-
-    return parser.parse_args()
-
-
 def main():
     """主函数"""
-    args = parse_args()
-
     print("\n" + "="*80)
     print("M3Bench 任务生成器 V2 (配置驱动)")
     print("="*80)
@@ -460,7 +336,7 @@ def main():
     print("\n" + "="*80 + "\n")
 
     # 设置输出目录
-    run_dir, run_number = setup_output_directory(args.output_dir)
+    run_dir, run_number = setup_output_directory()
     print(f"📁 输出目录: {run_dir}")
     print(f"🔢 运行编号: {run_number}\n")
 
@@ -476,7 +352,10 @@ def main():
     try:
         # 加载配置
         logger.info("加载配置文件...")
-        config = load_config(args.config_file)
+        import os
+        # 使用绝对路径指定配置文件
+        config_file = "d:\\install_file\\M3Bench\\M3Bench-delivery\\dataprovider\\dataset_configs.yaml"
+        config = load_config(config_file)
 
         # 验证数据集路径
         logger.info("验证数据集路径...")
@@ -486,36 +365,54 @@ def main():
         print("\n可用数据集:")
         for dataset_id in valid_datasets:
             dataset_config = config.get_dataset_config(dataset_id)
-            enabled_tasks = [t for t in dataset_config.supported_tasks
-                           if dataset_config.is_task_enabled(t)]
-            print(f"  ✓ {dataset_id}: {', '.join(enabled_tasks)}")
-
-        # 动态加载生成配置
-        logger.info("加载生成配置...")
-        generation_config = load_generation_config(
-            config_loader=config,
-            override_datasets=args.datasets,
-            override_num_samples=args.num_samples,
-            override_split=args.split
-        )
-
-        if args.verbose:
-            print("\n生成配置:")
-            for ds_id, ds_config in generation_config.items():
-                print(f"  {ds_id}: samples={ds_config['num_samples']}, split={ds_config['split']}")
+            # 显示所有支持的任务，而不仅仅是被启用的任务
+            supported_tasks = dataset_config.supported_tasks
+            print(f"  ✓ {dataset_id}: {', '.join(supported_tasks)}")
+        
+        # 确保包含vcr数据集
+        if 'vcr' not in valid_datasets:
+            logger.warning("vcr数据集未找到，请检查配置文件")
 
         # 初始化生成器
         logger.info("初始化数据生成器...")
-        loader = DataLoader(data_root=args.data_root)
-        generator = DataGeneratorV2(loader, config_file=args.config_file)
+        import os
+        # 使用新的数据集路径
+        data_root = "d:\install_file\M3Bench\dataset"
+        loader = DataLoader(data_root=data_root)
+        # 使用与路径验证相同的配置文件
+        config_file = "d:\install_file\M3Bench\M3Bench-delivery\dataprovider\dataset_configs.yaml"
+        generator = DataGeneratorV2(loader, config_file=config_file)
 
         # 生成任务
         all_results = {}
 
+        # 配置：为每个数据集生成多少样本
+        generation_config = {
+            'mscoco14': {
+                'num_samples': 5,
+                'split': 'val'  # Use val split since images are in val2014 directory
+            },
+            'vcr': {
+                'num_samples': 5,
+                'split': 'train'
+            },
+            'scienceqa': {
+                'num_samples': 5,
+                'split': 'validation'
+            },
+            'docvqa': {
+                'num_samples': 5,
+                'split': 'validation'
+            },
+            'realworldqa': {
+                'num_samples': 5,
+                'split': 'test'
+            }
+        }
+
         for dataset_id in valid_datasets:
             if dataset_id not in generation_config:
-                if args.verbose:
-                    logger.info(f"跳过 {dataset_id} (未在生成配置中)")
+                logger.info(f"跳过 {dataset_id} (未配置)")
                 continue
 
             config_for_dataset = generation_config[dataset_id]

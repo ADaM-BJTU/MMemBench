@@ -20,6 +20,7 @@ Supports multiple dataset formats:
 
 import json
 import jsonlines
+import random
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 import logging
@@ -47,7 +48,7 @@ class DataLoader:
         "visual_genome"
     ]
 
-    def __init__(self, data_root: str = "data"):
+    def __init__(self, data_root: str = "d:\\install_file\\M3Bench\\dataset"):
         """
         Initialize DataLoader.
 
@@ -84,8 +85,10 @@ class DataLoader:
         loader_method = getattr(self, f"_load_{dataset_id.replace('-', '_')}")
         data = loader_method(split=split, **kwargs)
 
-        if max_samples:
-            data = data[:max_samples]
+        if max_samples and max_samples < len(data):
+            data = random.sample(data, max_samples)
+        elif max_samples:
+            data = data[:max_samples]  # 数据量不足时使用全部
 
         logger.info(f"Loaded {len(data)} samples from {dataset_id} ({split})")
         return data
@@ -110,6 +113,7 @@ class DataLoader:
         """
         # Try multiple possible locations for MSCOCO14
         possible_dirs = [
+            self.data_root / "MSCOCO",  # New structure: d:\install_file\M3Bench\dataset\MSCOCO
             self.data_root / "MSCOCO" / "MSCOCO14",  # Standard structure
             self.data_root / "MSCOCO14",              # Direct
             Path("E:/Dataset/MSCOCO/MSCOCO14")       # Absolute fallback
@@ -134,80 +138,128 @@ class DataLoader:
             ann_file = data_dir / "example" / f"instances_{split}2014.json"
             cap_file = data_dir / "example" / f"captions_{split}2014.json"
 
-        with open(ann_file, 'r') as f:
-            ann_data = json.load(f)
+        # For test split, try image_info_test2014.json if instances_test2014.json not found
+        if split == 'test' and not ann_file.exists():
+            ann_file = data_dir / "annotations" / "image_info_test2014.json"
+            cap_file = data_dir / "annotations" / "captions_val2014.json"  # Use val captions as fallback
 
-        with open(cap_file, 'r') as f:
-            cap_data = json.load(f)
+            # Fallback to example directory for test info
+            if not ann_file.exists():
+                ann_file = data_dir / "example" / "image_info_test2014.json"
+
+        if not ann_file.exists():
+            logger.error(f"MSCOCO标注文件不存在: {ann_file}")
+            return []
+
+        # Load annotations
+        try:
+            with open(ann_file, 'r', encoding='utf-8') as f:
+                ann_data = json.load(f)
+
+            # Try to load captions if file exists
+            cap_data = {}
+            if cap_file.exists():
+                with open(cap_file, 'r', encoding='utf-8') as f:
+                    cap_data = json.load(f)
+        except Exception as e:
+            logger.error(f"加载MSCOCO标注文件失败: {e}")
+            return []
 
         # Build image id to annotations mapping
         image_to_anns = {}
-        for ann in ann_data['annotations']:
-            img_id = ann['image_id']
-            if img_id not in image_to_anns:
-                image_to_anns[img_id] = []
-            image_to_anns[img_id].append(ann)
+        if 'annotations' in ann_data:
+            for ann in ann_data['annotations']:
+                img_id = ann['image_id']
+                if img_id not in image_to_anns:
+                    image_to_anns[img_id] = []
+                image_to_anns[img_id].append(ann)
 
         # Build image id to captions mapping
         image_to_caps = {}
-        for cap in cap_data['annotations']:
-            img_id = cap['image_id']
-            if img_id not in image_to_caps:
-                image_to_caps[img_id] = []
-            image_to_caps[img_id].append(cap['caption'])
+        if 'annotations' in cap_data:
+            for cap in cap_data['annotations']:
+                img_id = cap['image_id']
+                if img_id not in image_to_caps:
+                    image_to_caps[img_id] = []
+                image_to_caps[img_id].append(cap['caption'])
 
         # Build category id to name mapping
-        cat_id_to_name = {cat['id']: cat['name'] for cat in ann_data['categories']}
+        cat_id_to_name = {}
+        if 'categories' in ann_data:
+            cat_id_to_name = {cat['id']: cat['name'] for cat in ann_data['categories']}
 
         # Construct samples
         samples = []
-        for img_info in ann_data['images']:
-            img_id = img_info['id']
+        if 'images' in ann_data:
+            for img_info in ann_data['images']:
+                img_id = img_info['id']
 
-            # Get objects
-            objects = []
-            if img_id in image_to_anns:
-                for ann in image_to_anns[img_id]:
-                    objects.append({
-                        'id': ann['id'],
-                        'category': cat_id_to_name[ann['category_id']],
-                        'category_id': ann['category_id'],
-                        'bbox': ann['bbox'],  # [x, y, width, height]
-                        'area': ann['area'],
-                        'segmentation': ann.get('segmentation', None),
-                        'iscrowd': ann.get('iscrowd', 0)
-                    })
+                # Get objects
+                objects = []
+                if img_id in image_to_anns:
+                    for ann in image_to_anns[img_id]:
+                        if 'category_id' in ann and ann['category_id'] in cat_id_to_name:
+                            objects.append({
+                                'id': ann['id'],
+                                'category': cat_id_to_name[ann['category_id']],
+                                'category_id': ann['category_id'],
+                                'bbox': ann['bbox'],  # [x, y, width, height]
+                                'area': ann['area'],
+                                'segmentation': ann.get('segmentation', None),
+                                'iscrowd': ann.get('iscrowd', 0)
+                            })
 
-            # Build image path - try multiple locations
-            file_name = img_info['file_name']
-            possible_paths = [
-                data_dir / file_name,  # Direct: MSCOCO14/COCO_train2014_*.jpg
-                data_dir / f"{split}2014" / file_name,  # Standard: MSCOCO14/train2014/COCO_train2014_*.jpg
-                data_dir / "images" / file_name  # Alternative: MSCOCO14/images/COCO_train2014_*.jpg
-            ]
+                # Build image path - try multiple locations
+                file_name = img_info['file_name']
+                
+                # 首先检查实际存在的目录
+                image_path = None
+                
+                # 优先检查val2014目录（因为它存在且包含图片）
+                val_dir = data_dir / "val2014"
+                if val_dir.exists():
+                    val_img_path = val_dir / file_name
+                    if val_img_path.exists():
+                        image_path = str(val_img_path)
+                        logger.debug(f"Found image in val2014: {image_path}")
+                
+                # 如果val2014中没找到，检查其他可能的目录
+                if image_path is None:
+                    possible_dirs = ['test2014', 'images', 'example']
+                    for dir_name in possible_dirs:
+                        dir_path = data_dir / dir_name
+                        if dir_path.exists():
+                            img_path = dir_path / file_name
+                            if img_path.exists():
+                                image_path = str(img_path)
+                                logger.debug(f"Found image in {dir_name}: {image_path}")
+                                break
+                
+                # 如果还是没找到，尝试直接在data_dir下查找
+                if image_path is None:
+                    img_path = data_dir / file_name
+                    if img_path.exists():
+                        image_path = str(img_path)
+                        logger.debug(f"Found image in root: {image_path}")
+                
+                # 如果仍然没找到，使用val2014作为默认目录（因为它实际存在）
+                if image_path is None:
+                    image_path = str(data_dir / "val2014" / file_name)
+                    logger.debug(f"Using default path in val2014: {image_path}")
 
-            image_path = None
-            for path in possible_paths:
-                if path.exists():
-                    image_path = str(path)
-                    break
+                samples.append({
+                    'dataset_id': 'mscoco14',
+                    'sample_id': f"mscoco14_{img_id}",
+                    'image_path': image_path,
+                    'image_id': img_id,
+                    'file_name': img_info['file_name'],
+                    'objects': objects,
+                    'captions': image_to_caps.get(img_id, []),
+                    'width': img_info['width'],
+                    'height': img_info['height']
+                })
 
-            # Use first option even if not exists (for consistency)
-            if image_path is None:
-                image_path = str(possible_paths[1])  # Use split2014/ subdirectory as default
-
-            samples.append({
-                'dataset_id': 'mscoco14',
-                'sample_id': f"mscoco14_{img_id}",
-                'image_path': image_path,
-                'image_id': img_id,
-                'file_name': img_info['file_name'],
-                'objects': objects,
-                'captions': image_to_caps.get(img_id, []),
-                'width': img_info['width'],
-                'height': img_info['height']
-            })
-
+        logger.info(f"加载MSCOCO14数据集完成，共 {len(samples)} 张图片")
         return samples
 
     # ==================== Visual Genome ====================
@@ -227,92 +279,44 @@ class DataLoader:
             }
         }
         """
-        data_dir = self.data_root / "VisualGenome"
+        data_dir = self.data_root / "visual_genome"
 
-        # Check if data directory exists
-        if not data_dir.exists():
-            logger.warning(
-                f"Visual Genome 数据集目录不存在: {data_dir}\n"
-                f"请下载数据集到: {data_dir}\n"
-                f"下载地址: https://homes.cs.washington.edu/~ranjay/visualgenome/api.html"
-            )
+        # Load scene graphs
+        sg_file = data_dir / f"scene_graphs_{split}.json"
+
+        if not sg_file.exists():
+            logger.warning(f"Scene graph file not found: {sg_file}")
             return []
 
-        # Load objects and relationships (VG uses combined format, not split-based)
-        objects_file = data_dir / "objects.json"
-        relationships_file = data_dir / "relationships.json"
+        with open(sg_file, 'r') as f:
+            scene_graphs = json.load(f)
 
-        if not objects_file.exists() or not relationships_file.exists():
-            logger.warning(
-                f"Visual Genome 数据文件不存在:\n"
-                f"  需要: {objects_file}\n"
-                f"  需要: {relationships_file}\n"
-                f"请确保已下载并解压到: {data_dir}"
-            )
-            return []
-
-        logger.info(f"Loading Visual Genome objects from {objects_file}...")
-        with open(objects_file, 'r') as f:
-            objects_data = json.load(f)
-
-        logger.info(f"Loading Visual Genome relationships from {relationships_file}...")
-        with open(relationships_file, 'r') as f:
-            relationships_data = json.load(f)
-
-        # Build image_id -> relationships mapping
-        rel_by_image = {}
-        for rel_item in relationships_data:
-            img_id = rel_item['image_id']
-            if img_id not in rel_by_image:
-                rel_by_image[img_id] = []
-            rel_by_image[img_id].extend(rel_item.get('relationships', []))
-
-        # Process objects and combine with relationships
         samples = []
-        max_samples = kwargs.get('max_samples', 100)  # Limit for faster loading
-
-        for idx, obj_item in enumerate(objects_data):
-            if idx >= max_samples:
-                break
-
-            img_id = obj_item['image_id']
-
+        for sg in scene_graphs:
             # Parse objects
             objects = {}
-            for obj in obj_item.get('objects', []):
+            for obj in sg.get('objects', []):
                 obj_id = str(obj['object_id'])
                 objects[obj_id] = {
-                    'name': obj.get('names', [''])[0] if obj.get('names') else '',
-                    'bbox': [obj.get('x', 0), obj.get('y', 0),
-                            obj.get('w', 0), obj.get('h', 0)],
+                    'name': obj['names'][0] if obj.get('names') else '',
+                    'bbox': [obj['x'], obj['y'], obj['w'], obj['h']],
                     'attributes': obj.get('attributes', [])
                 }
 
-            # Parse relationships for this image
+            # Parse relationships
             relationships = []
-            for rel in rel_by_image.get(img_id, []):
+            for rel in sg.get('relationships', []):
                 relationships.append({
-                    'subject': str(rel.get('subject', {}).get('object_id', '')),
-                    'predicate': rel.get('predicate', ''),
-                    'object': str(rel.get('object', {}).get('object_id', ''))
+                    'subject': str(rel['subject_id']),
+                    'predicate': rel['predicate'],
+                    'object': str(rel['object_id'])
                 })
-
-            # Determine image path - VG has images in VG_100K and VG_100K_2
-            img_path_1 = data_dir / "2016" / "VG_100K" / f"{img_id}.jpg"
-            img_path_2 = data_dir / "2016" / "VG_100K_2" / f"{img_id}.jpg"
-
-            if img_path_1.exists():
-                img_path = str(img_path_1)
-            elif img_path_2.exists():
-                img_path = str(img_path_2)
-            else:
-                img_path = str(img_path_1)  # Use first as default
 
             samples.append({
                 'dataset_id': 'visual_genome',
-                'sample_id': f"vg_{img_id}",
-                'image_id': img_id,
-                'image_path': img_path,
+                'sample_id': f"vg_{sg['image_id']}",
+                'image_id': sg['image_id'],
+                'image_path': str(data_dir / "images" / f"{sg['image_id']}.jpg"),
                 'scene_graph': {
                     'objects': objects,
                     'relationships': relationships
@@ -325,48 +329,26 @@ class DataLoader:
 
     def _load_vcr(self, split: str = "train", **kwargs) -> List[Dict]:
         """
-        Load Visual Commonsense Reasoning dataset (增强版 - 包含rationale).
-
-        Args:
-            split: "train" | "val" | "test"
-            **kwargs:
-                include_rationale: bool = True  # 是否包含rationale
-                include_all_choices: bool = False  # 是否包含所有选项
-                decode_tokens: bool = True  # 是否解码token为文本
+        Load Visual Commonsense Reasoning dataset.
 
         Returns format:
         {
             'dataset_id': 'vcr',
             'sample_id': str,
             'image_path': str,
-
-            # 问题和答案 (原始token和解码文本)
-            'question': List[Union[str, List[int]]],  # 原始token
-            'question_text': str,  # 解码后的问题文本
+            'question': List[Union[str, List[int]]],
             'answer_choices': List[List[Union[str, List[int]]]],
             'answer_label': int,
-            'answer_text': str,  # 正确答案文本
-
-            # ⭐ Rationale (新增)
             'rationale_choices': List[List[Union[str, List[int]]]],
             'rationale_label': int,
-            'rationale_text': str,  # 正确rationale文本
-            'reasoning_steps': List[str],  # 拆分的推理步骤
-
-            # 物体信息
             'objects': List[str],
             'metadata': {'boxes', 'segms', 'width', 'height'}
         }
         """
-        include_rationale = kwargs.get('include_rationale', True)
-        include_all_choices = kwargs.get('include_all_choices', False)
-        decode_tokens = kwargs.get('decode_tokens', True)
-
         # Try both directory names (handle typo in original dataset)
-        data_dir = self._find_vcr_directory()
-        if data_dir is None:
-            logger.warning("VCR directory not found")
-            return []
+        data_dir = self.data_root / "VisualCommenReasoning"
+        if not data_dir.exists():
+            data_dir = self.data_root / "VisualCommenReasnoning"  # Typo version
 
         # Load annotations
         ann_file = data_dir / f"{split}.jsonl"
@@ -388,81 +370,25 @@ class DataLoader:
 
                 try:
                     item = json.loads(line)
-                    objects = item.get('objects', [])
 
                     # Skip metadata loading for faster processing
+                    # metadata can be loaded later if needed
                     metadata = {}
 
-                    # 解码问题
-                    question_tokens = item.get('question', [])
-                    question_text = self._decode_vcr_tokens(question_tokens, objects) if decode_tokens else str(question_tokens)
-
-                    # 解码正确答案
-                    answer_choices = item.get('answer_choices', [])
-                    answer_label = item.get('answer_label', 0)
-                    answer_tokens = answer_choices[answer_label] if answer_label < len(answer_choices) else []
-                    answer_text = self._decode_vcr_tokens(answer_tokens, objects) if decode_tokens else str(answer_tokens)
-
-                    sample = {
+                    samples.append({
                         'dataset_id': 'vcr',
                         'sample_id': f"vcr_{split}_{valid_count}",
                         'annot_id': item.get('annot_id', f"{split}-{valid_count}"),
-                        'image_path': self._resolve_vcr_image_path(data_dir, item.get('img_fn', '')),
-
-                        # 问题和答案
-                        'question': question_tokens,
-                        'question_text': question_text,
-                        'answer_choices': answer_choices,
-                        'answer_label': answer_label,
-                        'answer_text': answer_text,
-
-                        # 物体信息
-                        'objects': objects,
-                        'metadata_fn': item.get('metadata_fn', ''),
-                        'metadata': metadata,
-
-                        # 电影信息
-                        'movie': item.get('movie', ''),
-                        'img_id': item.get('img_id', '')
-                    }
-
-                    # ⭐ 添加Rationale
-                    if include_rationale:
-                        rationale_choices = item.get('rationale_choices', [])
-                        rationale_label = item.get('rationale_label', -1)
-
-                        sample['rationale_choices'] = rationale_choices
-                        sample['rationale_label'] = rationale_label
-
-                        if rationale_label >= 0 and rationale_label < len(rationale_choices):
-                            rationale_tokens = rationale_choices[rationale_label]
-                            rationale_text = self._decode_vcr_tokens(rationale_tokens, objects) if decode_tokens else str(rationale_tokens)
-
-                            # 拆分推理步骤
-                            reasoning_steps = self._extract_reasoning_steps(rationale_text)
-
-                            sample.update({
-                                'rationale_text': rationale_text,
-                                'rationale_tokens': rationale_tokens,
-                                'reasoning_steps': reasoning_steps
-                            })
-                        else:
-                            sample.update({
-                                'rationale_text': '',
-                                'rationale_tokens': [],
-                                'reasoning_steps': []
-                            })
-
-                    # 添加所有选项的解码文本
-                    if include_all_choices and decode_tokens:
-                        sample['all_answer_choices_text'] = [
-                            self._decode_vcr_tokens(c, objects) for c in answer_choices
-                        ]
-                        sample['all_rationale_choices_text'] = [
-                            self._decode_vcr_tokens(c, objects) for c in rationale_choices
-                        ] if include_rationale else []
-
-                    samples.append(sample)
+                        'image_path': str(data_dir / 'vcr1images' / item['img_fn']),
+                        'question': item['question'],
+                        'answer_choices': item['answer_choices'],
+                        'answer_label': item['answer_label'],
+                        'rationale_choices': item.get('rationale_choices', []),
+                        'rationale_label': item.get('rationale_label', -1),
+                        'objects': item['objects'],
+                        'metadata_fn': item.get('metadata_fn', ''),  # Store path for later loading
+                        'metadata': metadata
+                    })
                     valid_count += 1
 
                 except (json.JSONDecodeError, KeyError) as e:
@@ -474,128 +400,7 @@ class DataLoader:
         if error_count > 0:
             logger.info(f"Loaded {valid_count} valid VCR samples, skipped {error_count} invalid lines")
 
-        logger.info(f"Loaded {len(samples)} VCR samples with rationale support")
         return samples
-
-    def _decode_vcr_tokens(self, tokens: List, objects: List[str]) -> str:
-        """
-        解码VCR token列表为可读文本
-
-        规则:
-        - 字符串token: 直接拼接
-        - [n]: 替换为[objects[n]_n]
-        - [n, m, ...]: 替换为[objects[n]_n] and [objects[m]_m]
-
-        Example:
-            tokens = [[0], "'", "s", "expression", "is", "twisted"]
-            objects = ["person", "person", "car"]
-            result = "[person_0]'s expression is twisted"
-        """
-        if not tokens:
-            return ""
-
-        result = []
-        for token in tokens:
-            if isinstance(token, list):
-                # 物体引用 [0] 或 [0, 1]
-                refs = []
-                for obj_idx in token:
-                    if isinstance(obj_idx, int) and obj_idx < len(objects):
-                        refs.append(f"[{objects[obj_idx]}_{obj_idx}]")
-                    else:
-                        refs.append(f"[object_{obj_idx}]")
-                result.append(" and ".join(refs))
-            else:
-                result.append(str(token))
-
-        # 智能拼接（处理标点符号）
-        text = ""
-        for i, part in enumerate(result):
-            # 不在标点符号前加空格
-            if i > 0 and part not in ".,!?':;)\"" and not text.endswith("(\"'"):
-                text += " "
-            text += part
-
-        return text.strip()
-
-    def _extract_reasoning_steps(self, rationale_text: str) -> List[str]:
-        """
-        从rationale文本中提取推理步骤
-
-        策略:
-        1. 按句号分割
-        2. 识别因果连接词
-        3. 保持步骤间的逻辑关系
-
-        Returns:
-            List[str]: 推理步骤列表
-        """
-        import re
-
-        if not rationale_text:
-            return []
-
-        # 分割句子
-        sentences = re.split(r'[.!?]+', rationale_text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-
-        # 如果只有一句，尝试用连接词分割
-        if len(sentences) == 1:
-            # 尝试按因果词分割
-            causal_patterns = [
-                r'\s+because\s+',
-                r'\s+so\s+',
-                r'\s+therefore\s+',
-                r'\s+since\s+',
-                r'\s+thus\s+',
-                r',\s+and\s+',
-                r',\s+which\s+',
-            ]
-            for pattern in causal_patterns:
-                parts = re.split(pattern, sentences[0], flags=re.IGNORECASE)
-                if len(parts) > 1:
-                    sentences = [p.strip() for p in parts if p.strip()]
-                    break
-
-        return sentences
-
-    def _find_vcr_directory(self) -> Optional[Path]:
-        """查找VCR数据目录"""
-        possible_paths = [
-            self.data_root / "VisualCommenReasoning",
-            self.data_root / "VisualCommenReasnoning",  # Typo version
-            self.data_root / "VisualCommonsenseReasoning",
-            self.data_root / "VCR",
-            self.data_root / "vcr",
-            Path("E:/Dataset/VisualCommenReasoning"),
-            Path("E:/Dataset/VisualCommenReasnoning"),
-            Path("data/VisualCommenReasoning")
-        ]
-
-        for path in possible_paths:
-            if path.exists():
-                return path
-
-        return None
-
-    def _resolve_vcr_image_path(self, data_dir: Path, img_fn: str) -> str:
-        """解析VCR图片路径"""
-        if not img_fn:
-            return ""
-
-        # 尝试多种路径
-        candidates = [
-            data_dir / 'vcr1images' / img_fn,
-            data_dir / img_fn,
-            data_dir / "images" / img_fn,
-        ]
-
-        for candidate in candidates:
-            if candidate.exists():
-                return str(candidate)
-
-        # 返回第一个候选路径（即使不存在）
-        return str(candidates[0])
 
     # ==================== Sherlock ====================
 
@@ -616,21 +421,7 @@ class DataLoader:
             'height': int
         }
         """
-        data_dir = self.data_root / "Sherlock-VCR"
-
-        # Check if data directory exists
-        if not data_dir.exists():
-            logger.warning(
-                f"Sherlock 数据集目录不存在: {data_dir}\n"
-                f"请下载数据集到: {data_dir}\n"
-                f"下载地址: https://github.com/yukezhu/sherlock"
-            )
-            return []
-
-        # VCR image directory (Sherlock uses VCR images)
-        vcr_dir = self.data_root / "VisualCommenReasnoning"
-        if not vcr_dir.exists():
-            vcr_dir = self.data_root / "VisualCommonReasoning"
+        data_dir = self.data_root / "Sherlock"
 
         # Load annotations
         if split == "train":
@@ -639,41 +430,19 @@ class DataLoader:
             ann_file = data_dir / "sherlock_val_with_split_idxs_v1_1.json"
 
         if not ann_file.exists():
-            logger.warning(
-                f"Sherlock 标注文件不存在: {ann_file}\n"
-                f"需要文件: sherlock_{split}_v1_1.json\n"
-                f"请确保已下载并放置在: {data_dir}"
-            )
+            logger.warning(f"Sherlock file not found: {ann_file}")
             return []
 
         with open(ann_file, 'r') as f:
             data = json.load(f)
 
         samples = []
-        max_samples = kwargs.get('max_samples', 100)
-
-        for idx, item in enumerate(data):
-            if idx >= max_samples:
-                break
-
+        for item in data:
             inputs = item['inputs']
-
-            # Extract local image path from URL
-            # URL format: http://s3-us-west-2.amazonaws.com/ai2-rowanz/vcr1images/movieclips_*/xxx.jpg
-            image_url = inputs['image']['url']
-            # Extract the path after vcr1images/
-            if 'vcr1images/' in image_url:
-                img_rel_path = image_url.split('vcr1images/')[-1]
-                # Use VCR local directory
-                image_path = str(vcr_dir / 'vcr1images' / img_rel_path)
-            else:
-                image_path = image_url  # Keep URL if can't parse
-
             samples.append({
                 'dataset_id': 'sherlock',
                 'sample_id': item['instance_id'],
-                'image_path': image_path,
-                'image_url': image_url,  # Keep original URL
+                'image_path': inputs['image']['url'],
                 'width': inputs['image']['width'],
                 'height': inputs['image']['height'],
                 'bboxes': inputs['bboxes'],
@@ -690,48 +459,164 @@ class DataLoader:
     def _load_scienceqa(self, split: str = "train", **kwargs) -> List[Dict]:
         """
         Load ScienceQA dataset.
-
-        Returns format:
-        {
-            'dataset_id': 'scienceqa',
-            'sample_id': str,
-            'image': Optional[image bytes],
-            'question': str,
-            'choices': List[str],
-            'answer': int,
-            'hint': str,
-            'task': str,
-            'grade': str,
-            'subject': str,
-            'topic': str,
-            'category': str,
-            'lecture': str,
-            'solution': str
-        }
         """
-        # Note: ScienceQA is in parquet format, we'll provide a placeholder
-        # for actual implementation
-        logger.warning("ScienceQA loader requires parquet support - returning empty")
-        return []
+        import glob
+        import pandas as pd
+        import pyarrow
+        from pathlib import Path
+        
+        data_dir = self.data_root / "ScienceQA"
+        images_output_dir = data_dir / "images"
+        images_output_dir.mkdir(exist_ok=True)
+
+        parquet_files = list(glob.glob(str(data_dir / f"{split}-*.parquet")))
+        if not parquet_files:
+            logger.warning(f"ScienceQA parquet file not found for split {split}")
+            return []
+
+        parquet_file = parquet_files[0]
+        logger.info(f"Loading ScienceQA from: {parquet_file}")
+
+        try:
+            df = pd.read_parquet(parquet_file)
+            samples = []
+            for idx, row in df.iterrows():
+                image_bytes = row.get('image')
+                image_path = None
+                
+                if image_bytes is not None and len(image_bytes) > 0:
+                    if isinstance(image_bytes, dict) and 'bytes' in image_bytes:
+                        image_bytes = image_bytes['bytes']
+                    
+                    if image_bytes is not None and isinstance(image_bytes, (bytes, bytearray)):
+                        image_filename = f"scienceqa_{split}_{idx:06d}.png"
+                        image_path = str(images_output_dir / image_filename)
+                        try:
+                            with open(image_path, 'wb') as f:
+                                f.write(image_bytes)
+                        except Exception as img_err:
+                            logger.warning(f"Failed to save image for sample {idx}: {img_err}")
+                            image_path = None
+                
+                sample = {
+                    'dataset_id': 'scienceqa',
+                    'sample_id': f"scienceqa_{split}_{idx:06d}",
+                    'image': image_bytes,
+                    'image_path': image_path,
+                    'question': row.get('question', ''),
+                    'answer': row.get('answer', 0),
+                    'subject': row.get('subject', ''),
+                    'topic': row.get('topic', ''),
+                    'grade': row.get('grade', ''),
+                    'task': row.get('task', ''),
+                    'category': row.get('category', ''),
+                    'hint': row.get('hint', ''),
+                    'lecture': row.get('lecture', ''),
+                    'solution': row.get('solution', ''),
+                    'choices': row.get('choices', row.get('option', []))
+                }
+                samples.append(sample)
+            
+            logger.info(f"Loaded {len(samples)} samples from ScienceQA ({split}), saved {sum(1 for s in samples if s['image_path'])} images")
+            return samples
+            
+        except Exception as e:
+            logger.error(f"Error loading ScienceQA: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
 
     # ==================== RealworldQA ====================
 
-    def _load_realworldqa(self, split: str = "train", **kwargs) -> List[Dict]:
+    def _load_realworldqa(self, split: str = "test", **kwargs) -> List[Dict]:
         """
         Load RealworldQA dataset.
+        使用已保存的图片文件（位于 data/images 目录）
 
         Returns format:
         {
             'dataset_id': 'realworldqa',
             'sample_id': str,
-            'image': image bytes,
+            'image_path': str,
             'question': str,
             'answer': str
         }
         """
-        # Note: RealworldQA is in parquet format
-        logger.warning("RealworldQA loader requires parquet support - returning empty")
-        return []
+        import glob
+        import pandas as pd
+        import pyarrow
+        from pathlib import Path
+        import os
+        
+        data_dir = self.data_root / "xai-org_RealworldQA" / "data"
+        images_dir = data_dir / "images"
+        
+        # 图片命名格式: realworldqa_000000.png, realworldqa_000001.png, ...
+        image_pattern = str(images_dir / "realworldqa_*.png")
+        saved_images = {}
+        
+        # 收集已保存的图片文件
+        for img_path in glob.glob(image_pattern):
+            img_name = os.path.basename(img_path)
+            # 提取序号: realworldqa_000000.png -> 0
+            try:
+                idx = int(img_name.replace('realworldqa_', '').replace('.png', ''))
+                saved_images[idx] = img_path
+            except ValueError:
+                pass
+        
+        logger.info(f"Found {len(saved_images)} saved images in {images_dir}")
+
+        # 使用glob模式匹配parquet文件
+        parquet_files = list(glob.glob(str(data_dir / f"{split}-*.parquet")))
+
+        if not parquet_files:
+            logger.warning(f"RealworldQA parquet file not found for split {split}")
+            return []
+
+        logger.info(f"Found {len(parquet_files)} RealworldQA parquet files")
+
+        all_samples = []
+        sample_idx = 0
+        
+        for parquet_file in sorted(parquet_files):
+            logger.info(f"Loading RealworldQA from: {parquet_file}")
+            
+            # 尝试使用pyarrow引擎
+            try:
+                df = pd.read_parquet(parquet_file, engine='pyarrow')
+                logger.info(f"Successfully loaded {parquet_file} with pyarrow engine")
+            except Exception as e:
+                logger.warning(f"Failed to load {parquet_file} with pyarrow: {e}")
+                # 尝试使用fastparquet引擎
+                try:
+                    df = pd.read_parquet(parquet_file, engine='fastparquet')
+                    logger.info(f"Successfully loaded {parquet_file} with fastparquet engine")
+                except Exception as e2:
+                    logger.error(f"Failed to load {parquet_file} with both engines: {e2}")
+                    continue
+            
+            for idx, row in df.iterrows():
+                # 使用已保存的图片路径
+                image_path = saved_images.get(sample_idx)
+                
+                sample = {
+                    'dataset_id': 'realworldqa',
+                    'sample_id': f"realworldqa_{sample_idx}",
+                    'image_path': image_path,
+                    'question': row.get('question', ''),
+                    'answer': row.get('answer', '')
+                }
+                all_samples.append(sample)
+                sample_idx += 1
+        
+        if all_samples:
+            matched_images = sum(1 for s in all_samples if s['image_path'])
+            logger.info(f"Loaded {len(all_samples)} samples from RealworldQA ({split}), matched {matched_images} images")
+        else:
+            logger.warning(f"No samples loaded from RealworldQA ({split})")
+        
+        return all_samples
 
     # ==================== MM-NIAH ====================
 
@@ -873,76 +758,105 @@ class DataLoader:
 
     def _load_docvqa(self, split: str = "validation", **kwargs) -> List[Dict]:
         """
-        Load DocVQA dataset from parquet files.
+        Load DocVQA dataset.
 
         Returns format:
         {
             'dataset_id': 'docvqa',
             'sample_id': str,
-            'image': bytes (embedded in parquet),
             'question': str,
+            'answer': str,
             'answers': List[str],
-            'question_id': int,
-            'data_split': str
+            'image': bytes,
+            'image_path': str
         }
         """
+        import glob
+        import pandas as pd
+        import pyarrow
+        from pathlib import Path
+        
         data_dir = self.data_root / "lmms-lab_DocVQA" / "DocVQA"
 
-        # Check if data directory exists
-        if not data_dir.exists():
-            logger.warning(
-                f"DocVQA 数据集目录不存在: {data_dir}\n"
-                f"请下载数据集到: {data_dir}\n"
-                f"下载地址: https://huggingface.co/datasets/lmms-lab/DocVQA"
-            )
-            return []
+        # 创建图片输出目录
+        images_output_dir = data_dir / "images"
+        images_output_dir.mkdir(exist_ok=True)
 
-        # Try to import pyarrow for parquet support
-        try:
-            import pyarrow.parquet as pq
-        except ImportError:
-            logger.warning(
-                "DocVQA 需要 pyarrow 库读取 parquet 文件\n"
-                "请安装: pip install pyarrow"
-            )
-            return []
-
-        # Find parquet files for the split
-        parquet_files = sorted(data_dir.glob(f"{split}-*.parquet"))
+        # 使用glob模式匹配parquet文件
+        parquet_files = list(glob.glob(str(data_dir / f"{split}-*.parquet")))
 
         if not parquet_files:
-            logger.warning(
-                f"DocVQA parquet 文件不存在: {data_dir}/{split}-*.parquet\n"
-                f"可用的 split: train, test, validation"
-            )
+            logger.warning(f"DocVQA parquet file not found for split {split}")
             return []
 
-        logger.info(f"Found {len(parquet_files)} parquet files for DocVQA {split}")
+        logger.info(f"Found {len(parquet_files)} DocVQA parquet files")
 
-        samples = []
-        max_samples = kwargs.get('max_samples', 100)
-
-        # Read from first parquet file only (for speed)
-        table = pq.read_table(parquet_files[0])
-        df = table.to_pandas()
-
-        for idx, row in df.iterrows():
-            if idx >= max_samples:
-                break
-
-            samples.append({
-                'dataset_id': 'docvqa',
-                'sample_id': f"docvqa_{split}_{idx}",
-                'image': row.get('image', None),  # PIL Image or bytes
-                'question': row.get('question', ''),
-                'answers': row.get('answers', []),
-                'question_id': row.get('questionId', idx),
-                'data_split': row.get('data_split', split),
-                'question_types': row.get('question_types', [])
-            })
-
-        logger.info(f"Loaded {len(samples)} samples from DocVQA {split}")
-        return samples
+        try:
+            all_samples = []
+            for parquet_file in parquet_files:
+                logger.info(f"Loading DocVQA from: {parquet_file}")
+                df = pd.read_parquet(parquet_file)
+                
+                for idx, row in df.iterrows():
+                    # 处理嵌入的图片
+                    image_bytes = row.get('image')
+                    image_path = None
+                    
+                    if image_bytes is not None and len(image_bytes) > 0:
+                        # pyarrow可能使用字典格式存储图片 {'bytes': ..., 'path': ...}
+                        if isinstance(image_bytes, dict):
+                            # 从字典中提取bytes
+                            if 'bytes' in image_bytes:
+                                image_bytes = image_bytes['bytes']
+                            else:
+                                image_bytes = None
+                        
+                        if image_bytes is not None and isinstance(image_bytes, (bytes, bytearray)):
+                            image_filename = f"docvqa_{split}_{len(all_samples):06d}.png"
+                            image_path = str(images_output_dir / image_filename)
+                            
+                            try:
+                                with open(image_path, 'wb') as f:
+                                    f.write(image_bytes)
+                            except Exception as img_err:
+                                logger.warning(f"Failed to save image for sample {len(all_samples)}: {img_err}")
+                                image_path = None
+                    
+                    # 获取答案列表（正确使用answers字段）
+                    answers_list = []
+                    if 'answers' in row:
+                        answers_val = row['answers']
+                        if isinstance(answers_val, list):
+                            answers_list = answers_val
+                        else:
+                            answers_list = [str(answers_val)]
+                    
+                    # 选择第一个答案作为主要答案
+                    answer = answers_list[0] if answers_list else ''
+                    
+                    sample = {
+                        'dataset_id': 'docvqa',
+                        'sample_id': f"docvqa_{len(all_samples)}",
+                        'questionId': row.get('questionId', ''),
+                        'question': row.get('question', ''),
+                        'answer': answer,
+                        'answers': answers_list,
+                        'question_types': row.get('question_types', []),
+                        'image': image_bytes,
+                        'image_path': image_path,
+                        'docId': str(row.get('docId', '')),
+                        'data_split': row.get('data_split', split)
+                    }
+                    all_samples.append(sample)
+            
+            logger.info(f"Loaded {len(all_samples)} samples from DocVQA ({split}), saved {sum(1 for s in all_samples if s['image_path']) } images")
+            return all_samples
+            
+        except Exception as e:
+            logger.error(f"Error loading DocVQA: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
 
     # ==================== InfoGraphVQA ====================
 
@@ -968,79 +882,9 @@ class DataLoader:
     # ==================== GQA ====================
 
     def _load_gqa(self, split: str = "train", **kwargs) -> List[Dict]:
-        """
-        Load GQA dataset with scene graphs.
-
-        Returns format:
-        {
-            'dataset_id': 'gqa',
-            'sample_id': str,
-            'image_path': str,
-            'scene_graph': {
-                'objects': {id: {'name', 'bbox', 'attributes'}},
-                'relationships': [{'subject', 'predicate', 'object'}]
-            }
-        }
-        """
-        data_dir = self.data_root / "gqa"
-
-        # Check if data directory exists
-        if not data_dir.exists():
-            logger.warning(
-                f"GQA 数据集目录不存在: {data_dir}\n"
-                f"请下载数据集到: {data_dir}\n"
-                f"下载地址: https://cs.stanford.edu/people/dorarad/gqa/download.html"
-            )
-            return []
-
-        # Load scene graphs
-        sg_file = data_dir / f"{split}_sceneGraphs.json"
-
-        if not sg_file.exists():
-            logger.warning(
-                f"GQA scene graph 文件不存在: {sg_file}\n"
-                f"需要文件: {split}_sceneGraphs.json\n"
-                f"请确保已下载并放置在: {data_dir}"
-            )
-            return []
-
-        with open(sg_file, 'r') as f:
-            scene_graphs = json.load(f)
-
-        samples = []
-        for image_id, sg in scene_graphs.items():
-            # Parse objects
-            objects = {}
-            for obj_id, obj in sg.get('objects', {}).items():
-                objects[obj_id] = {
-                    'name': obj.get('name', ''),
-                    'bbox': [obj.get('x', 0), obj.get('y', 0),
-                            obj.get('w', 0), obj.get('h', 0)],
-                    'attributes': obj.get('attributes', [])
-                }
-
-            # Parse relationships
-            relationships = []
-            for obj_id, obj in sg.get('objects', {}).items():
-                for rel in obj.get('relations', []):
-                    relationships.append({
-                        'subject': obj_id,
-                        'predicate': rel.get('name', ''),
-                        'object': rel.get('object', '')
-                    })
-
-            samples.append({
-                'dataset_id': 'gqa',
-                'sample_id': f"gqa_{image_id}",
-                'image_id': image_id,
-                'image_path': str(data_dir / "images" / f"{image_id}.jpg"),
-                'scene_graph': {
-                    'objects': objects,
-                    'relationships': relationships
-                }
-            })
-
-        return samples
+        """Load GQA dataset with scene graphs."""
+        logger.warning("GQA loader not yet implemented - returning empty")
+        return []
 
     # ==================== Helper Methods ====================
 

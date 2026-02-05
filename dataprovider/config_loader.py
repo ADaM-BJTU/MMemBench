@@ -24,7 +24,10 @@ class DatasetConfig:
         self.splits = config_dict.get('splits', [])
         self.annotation_format = config_dict.get('annotation_format', {})
         self.capabilities = config_dict.get('capabilities', {})
+        # 同时支持两种键名
         self.supported_tasks = config_dict.get('supported_tasks', [])
+        if not self.supported_tasks:
+            self.supported_tasks = config_dict.get('supported_task_types', [])
         self.task_configs = config_dict.get('task_configs', {})
 
     def get_annotation_file(self, split: str, file_type: str = 'annotations') -> Path:
@@ -141,7 +144,16 @@ class ConfigLoader:
             self.config = yaml.safe_load(f)
 
         # Parse datasets
+        # 兼容直接在根级别定义数据集的格式
         datasets_config = self.config.get('datasets', {})
+        if not datasets_config:
+            # 检查根级别是否有数据集配置
+            root_keys = list(self.config.keys())
+            # 过滤掉非数据集配置键
+            dataset_keys = [key for key in root_keys if key not in ['task_templates', 'quality_control', 'output_format']]
+            if dataset_keys:
+                datasets_config = {key: self.config[key] for key in dataset_keys}
+
         for dataset_id, dataset_config in datasets_config.items():
             self.datasets[dataset_id] = DatasetConfig(dataset_config)
 
@@ -253,7 +265,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     try:
-        config = load_config()
+        config = load_config("d:\\install_file\\M3Bench\\M3Bench-delivery\\dataprovider\\dataset_configs.yaml")
 
         print("\n" + "="*70)
         print("Dataset Configuration Summary")

@@ -19,7 +19,6 @@ Key features:
 
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import random
@@ -349,12 +348,8 @@ class TemporalStateTaskGenerator:
             # Build the main question
             main_question = self._build_main_question(sample, qa_pairs)
 
-            # 生成全局唯一的task_id
-            rand_chars = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=4))
-            unique_task_id = f"ts_mantis_{int(time.time())}_{rand_chars}_{task_idx:03d}"
-
             return {
-                "task_id": unique_task_id,
+                "task_id": f"temporal_state_{task_idx}",
                 "task_type": "temporal_state_tracking",
                 "question": main_question["question"],
                 "answer": main_question["answer"],
